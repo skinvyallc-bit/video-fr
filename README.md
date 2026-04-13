@@ -1,1 +1,1371 @@
-# video-fr
+[package.json](https://github.com/user-attachments/files/26666052/package.json)
+# VidAI — AI Video Generation SaaS
+
+A full-stack SaaS application for AI-powered video generation with subscription-based access control, JWT authentication, and Stripe payments.
+
+---
+
+## Project Structure
+
+```
+aivideo/
+├── backend/
+│   ├── middleware/
+[server.js](https://github.com/user-attachments/files/26666056/server.js)
+[auth (3).js](https://github.com/user-attachments/files/26666055/auth.3.js)
+[Video.js](https://github.com/user-attachments/files/26666054/Video.js)
+
+│   │   └── auth.js              # JWT auth middleware
+│   ├── models/
+│   │   ├── User.js              # User schema with plan logic
+│   │   └── Video.js             # Video history schema
+│   ├── routes/
+│   │   ├── auth.js              # /auth/signup, /auth/login, /auth/me
+│   │   ├── video.js             # /generate-video, /generate-video/history
+│   │   └── subscription.js      # /subscription/* + Stripe webhook
+│   ├── uploads/                 # Uploaded asset files (auto-created)
+│   ├── .env.example
+│   ├── package.json
+│   ├── render.yaml              # Render.com deployment config
+│   └── server.js                # Express app entry point
+│
+└── frontend/
+    ├── public/
+    │   └── index.html
+    ├── src/
+    │   ├── components/
+    │   │   ├── Navbar.js
+    │   │   ├── ProtectedRoute.js
+    │   │   └── UpgradeModal.js
+    │   ├── context/
+    │   │   └── AuthContext.js   # Global auth state
+    │   ├── pages/
+    │   │   ├── HomePage.js
+    │   │   ├── LoginPage.js
+    │   │   ├── SignupPage.js
+    │   │   ├── DashboardPage.js
+    │   │   └── PricingPage.js
+    │   ├── utils/
+    │   │   └── api.js           # Axios API client
+    │   ├── App.js               # Router + Toaster
+    │   └── index.css            # Tailwind + custom styles
+    ├── .env.example
+    ├── package.json
+    ├── tailwind.config.js
+    └── vercel.json
+```
+
+---
+
+## Quick Start (Local Development)
+
+### Prerequisites
+- Node.js 18+
+- MongoDB (local or MongoDB Atlas)
+- Stripe account
+
+### 1. Clone & Install
+
+```bash
+# Backend
+cd backend
+npm install
+cp .env.example .env   # Fill in your values
+
+# Frontend
+cd ../frontend
+npm install
+cp .env.example .env   # Fill in your values
+```
+
+### 2. Configure Backend `.env`
+
+```env
+PORT=5000
+MONGODB_URI=mongodb+srv://USER:PASS@cluster.mongodb.net/aivideo
+JWT_SECRET=your_random_secret_min_32_chars
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+FRONTEND_URL=http://localhost:3000
+
+STRIPE_BASIC_PRICE_ID=price_...
+STRIPE_STANDARD_PRICE_ID=price_...
+STRIPE_PREMIUM_PRICE_ID=price_...
+```
+
+### 3. Configure Frontend `.env`
+
+```env
+REACT_APP_API_URL=http://localhost:5000
+REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_test_...
+```
+
+### 4. Run Both Servers
+
+```bash
+# Terminal 1 — Backend
+cd backend && npm run dev   # runs on :5000
+
+# Terminal 2 — Frontend
+cd frontend && npm start    # runs on :3000
+```
+
+---
+
+## Stripe Setup (Step-by-Step)
+
+### Step 1 — Create Products & Prices in Stripe Dashboard
+
+1. Log in to [dashboard.stripe.com](https://dashboard.stripe.com)
+2. Go to **Products** → **Add Product**
+
+Create these three products:
+
+| Product | Price | Interval | Description |
+|---------|-------|----------|-------------|
+| VidAI Basic | $5.00 | Monthly | 5 videos/mo, Product only, 30s, Watermark |
+| VidAI Standard | $19.00 | Monthly | 50 videos/mo, Product+Anime, 60s |
+| VidAI Premium | $49.00 | Monthly | Unlimited, All types, 120s, HD |
+
+3. After creating each product, copy the **Price ID** (starts with `price_`)
+4. Paste each Price ID into your backend `.env` as shown above
+
+### Step 2 — Get API Keys
+
+1. Go to **Developers → API keys**
+2. Copy:
+   - **Publishable key** → `REACT_APP_STRIPE_PUBLISHABLE_KEY` in frontend `.env`
+   - **Secret key** → `STRIPE_SECRET_KEY` in backend `.env`
+
+### Step 3 — Set Up Webhook
+
+1. Go to **Developers → Webhooks** → **Add endpoint**
+2. Set endpoint URL:
+   - Local: Use [Stripe CLI](https://stripe.com/docs/stripe-cli) to forward: `stripe listen --forward-to localhost:5000/subscription/webhook`
+   - Production: `https://your-render-url.onrender.com/subscription/webhook`
+3. Select these events to listen to:
+   - `checkout.session.completed`
+   - `invoice.payment_succeeded`
+   - `invoice.payment_failed`
+   - `customer.subscription.deleted`
+   - `customer.subscription.updated`
+4. Copy the **Signing secret** → `STRIPE_WEBHOOK_SECRET` in backend `.env`
+
+### Step 4 — Test Payments
+
+Use test card: `4242 4242 4242 4242`, any future expiry, any CVC.
+
+---
+
+## MongoDB Setup
+
+### Option A — MongoDB Atlas (Recommended for Production)
+
+1. Create free account at [mongodb.com/atlas](https://mongodb.com/atlas)
+2. Create a free M0 cluster
+3. Add database user (username + password)
+4. Whitelist IP `0.0.0.0/0` (all IPs) for deployment
+5. Click **Connect** → **Drivers** → copy the connection string
+6. Replace `<password>` in the URI and paste into `MONGODB_URI`
+
+### Option B — Local MongoDB
+
+```bash
+brew install mongodb-community   # macOS
+# or: sudo apt install mongodb   # Ubuntu
+
+mongod --dbpath /data/db
+# MONGODB_URI=mongodb://localhost:27017/aivideo
+```
+
+---
+
+## Deployment
+
+### Backend → Render.com
+
+1. Push backend code to GitHub
+2. Go to [render.com](https://render.com) → **New Web Service**
+3. Connect your GitHub repo, select the `backend/` directory
+4. Set **Build Command**: `npm install`
+5. Set **Start Command**: `node server.js`
+6. Add all environment variables from `.env`
+7. Deploy — note your service URL (e.g. `https://aivideo-api.onrender.com`)
+
+### Frontend → Vercel
+
+1. Push frontend code to GitHub
+2. Go to [vercel.com](https://vercel.com) → **New Project**
+3. Import your repo, set **Root Directory** to `frontend/`
+4. Add environment variables:
+   - `REACT_APP_API_URL` = your Render URL
+   - `REACT_APP_STRIPE_PUBLISHABLE_KEY` = your Stripe publishable key
+5. Deploy
+
+### Post-Deployment Checklist
+
+- [ ] Update `FRONTEND_URL` in backend env to your Vercel URL
+- [ ] Update Stripe webhook endpoint to your Render URL
+- [ ] Test signup → login → upgrade → generate flow end-to-end
+- [ ] Verify webhook events are received in Stripe Dashboard
+
+---
+
+## API Reference
+
+### Auth
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/auth/signup` | — | Register new user |
+| POST | `/auth/login` | — | Login, returns JWT |
+| GET | `/auth/me` | JWT | Get current user |
+
+### Video Generation
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/generate-video` | JWT | Start generation (multipart) |
+| GET | `/generate-video/history` | JWT | Paginated video history |
+| GET | `/generate-video/:id` | JWT | Single video status/details |
+
+### Subscription
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/subscription/create-checkout` | JWT | Create Stripe checkout session |
+| POST | `/subscription/cancel` | JWT | Cancel subscription |
+| GET | `/subscription/status` | JWT | Get plan & usage info |
+| POST | `/subscription/webhook` | Stripe | Stripe webhook handler |
+
+---
+
+## Plan Feature Matrix
+
+| Feature | Free | Basic ($5) | Standard ($19) | Premium ($49) |
+|---------|------|------------|----------------|---------------|
+| Videos/month | 0 | 5 | 50 | Unlimited |
+| Product Videos | ❌ | ✅ | ✅ | ✅ |
+| Anime Videos | ❌ | ❌ | ✅ | ✅ |
+| Cinematic Videos | ❌ | ❌ | ❌ | ✅ |
+| Max Duration | — | 30s | 60s | 120s |
+| Watermark | — | ✅ | ❌ | ❌ |
+| HD Download | ❌ | ❌ | ❌ | ✅ |
+| Priority Rendering | ❌ | ❌ | ❌ | ✅ |
+
+---
+
+## Notes
+
+- **Video generation is simulated** — the backend returns mock video URLs after a delay (8–20 seconds). To use real AI generation, replace `simulateVideoGeneration()` in `routes/video.js` with your chosen AI video API (e.g. RunwayML, Pika, Kling, Luma).
+- **File uploads** are stored locally in `backend/uploads/`. For production, replace with AWS S3 or Cloudinary.
+- JWT tokens expire in **30 days**. Adjust in `routes/auth.js` as needed.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, React Router v6, Tailwind CSS, Axios |
+| Auth | JWT (jsonwebtoken), bcryptjs |
+| Backend | Node.js, Express 4 |
+| Database | MongoDB, Mongoose |
+| Payments | Stripe Checkout + Webhooks |
+| File Upload | Multer |
+| Toast Notifications | react-hot-toast |
+| Frontend Deployment | Vercel |
+| Backend Deployment | Render |
+
+{
+  "name": "aivideo-saas",
+  "version": "1.0.0",
+  "description": "AI Video Generation SaaS — Root workspace",
+  "private": true,
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm start",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build:frontend": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+
+const protect = async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Not authorized. No token provided.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User not found.' });
+    }
+
+    user.resetMonthlyVideosIfNeeded();
+    await user.save({ validateBeforeSave: false });
+
+    req.user = user;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, message: 'Token invalid or expired.' });
+  }
+};
+
+module.exports = { protect };
+
+services:
+  - type: web
+    name: aivideo-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_BASIC_PRICE_ID
+        sync: false
+      - key: STRIPE_STANDARD_PRICE_ID
+        sync: false
+      - key: STRIPE_PREMIUM_PRICE_ID
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
+
+{
+  "name": "aivideo-backend",
+  "version": "1.0.0",
+  "description": "AI Video Generation SaaS Backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "multer": "^1.4.5-lts.1",
+    "stripe": "^14.10.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
+
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Name is required'],
+    trim: true,
+    maxlength: 50
+  },
+  email: {
+    type: String,
+    required: [true, 'Email is required'],
+    unique: true,
+    lowercase: true,
+    trim: true,
+    match: [/^\S+@\S+\.\S+$/, 'Invalid email format']
+  },
+  password: {
+    type: String,
+    required: [true, 'Password is required'],
+    minlength: 6,
+    select: false
+  },
+  plan: {
+    type: String,
+    enum: ['free', 'basic', 'standard', 'premium'],
+    default: 'free'
+  },
+  stripeCustomerId: {
+    type: String,
+    default: null
+  },
+  stripeSubscriptionId: {
+    type: String,
+    default: null
+  },
+  subscriptionStatus: {
+    type: String,
+    enum: ['active', 'canceled', 'past_due', 'none'],
+    default: 'none'
+  },
+  subscriptionEndDate: {
+    type: Date,
+    default: null
+  },
+  videosGeneratedThisMonth: {
+    type: Number,
+    default: 0
+  },
+  lastVideoResetDate: {
+    type: Date,
+    default: Date.now
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  const salt = await bcrypt.genSalt(12);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+userSchema.methods.resetMonthlyVideosIfNeeded = function() {
+  const now = new Date();
+  const lastReset = new Date(this.lastVideoResetDate);
+  if (now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+    this.videosGeneratedThisMonth = 0;
+    this.lastVideoResetDate = now;
+  }
+};
+
+userSchema.methods.getVideoLimit = function() {
+  const limits = { free: 0, basic: 5, standard: 50, premium: Infinity };
+  return limits[this.plan] || 0;
+};
+
+userSchema.methods.getMaxDuration = function() {
+  const durations = { free: 0, basic: 30, standard: 60, premium: 120 };
+  return durations[this.plan] || 0;
+};
+
+userSchema.methods.getAllowedVideoTypes = function() {
+  const types = {
+    free: [],
+    basic: ['product'],
+    standard: ['product', 'anime'],
+    premium: ['product', 'anime', 'cinematic']
+  };
+  return types[this.plan] || [];
+};
+
+module.exports = mongoose.model('User', userSchema);
+
+const mongoose = require('mongoose');
+
+const videoSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  title: {
+    type: String,
+    trim: true,
+    maxlength: 100
+  },
+  script: {
+    type: String,
+    required: true,
+    maxlength: 5000
+  },
+  videoType: {
+    type: String,
+    enum: ['product', 'anime', 'cinematic'],
+    required: true
+  },
+  duration: {
+    type: Number,
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed'],
+    default: 'pending'
+  },
+  videoUrl: {
+    type: String,
+    default: null
+  },
+  thumbnailUrl: {
+    type: String,
+    default: null
+  },
+  hasWatermark: {
+    type: Boolean,
+    default: true
+  },
+  isHD: {
+    type: Boolean,
+    default: false
+  },
+  uploadedFiles: [{
+    filename: String,
+    originalName: String,
+    mimetype: String,
+    size: Number
+  }],
+  planAtGeneration: {
+    type: String,
+    enum: ['basic', 'standard', 'premium']
+  },
+  processingTime: {
+    type: Number,
+    default: null
+  },
+  errorMessage: {
+    type: String,
+    default: null
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  completedAt: {
+    type: Date,
+    default: null
+  }
+});
+
+videoSchema.index({ user: 1, createdAt: -1 });
+
+module.exports = mongoose.model('Video', videoSchema);
+
+const express = require('express');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const User = require('../models/User');
+const { protect } = require('../middleware/auth');
+const router = express.Router();
+
+const PLAN_PRICE_MAP = {
+  basic: process.env.STRIPE_BASIC_PRICE_ID,
+  standard: process.env.STRIPE_STANDARD_PRICE_ID,
+  premium: process.env.STRIPE_PREMIUM_PRICE_ID
+};
+
+const PRICE_PLAN_MAP = {};
+
+const initPricePlanMap = async () => {
+  for (const [plan, priceId] of Object.entries(PLAN_PRICE_MAP)) {
+    if (priceId) PRICE_PLAN_MAP[priceId] = plan;
+  }
+};
+initPricePlanMap();
+
+// POST /subscription/create-checkout
+router.post('/create-checkout', protect, async (req, res) => {
+  try {
+    const { plan } = req.body;
+    const user = req.user;
+
+    if (!['basic', 'standard', 'premium'].includes(plan)) {
+      return res.status(400).json({ success: false, message: 'Invalid plan selected.' });
+    }
+
+    const priceId = PLAN_PRICE_MAP[plan];
+    if (!priceId) {
+      return res.status(400).json({ success: false, message: 'Plan price not configured. Please contact support.' });
+    }
+
+    let customerId = user.stripeCustomerId;
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.name,
+        metadata: { userId: user._id.toString() }
+      });
+      customerId = customer.id;
+      user.stripeCustomerId = customerId;
+      await user.save({ validateBeforeSave: false });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      payment_method_types: ['card'],
+      line_items: [{ price: priceId, quantity: 1 }],
+      mode: 'subscription',
+      success_url: `${process.env.FRONTEND_URL}/dashboard?payment=success&plan=${plan}`,
+      cancel_url: `${process.env.FRONTEND_URL}/pricing?payment=canceled`,
+      metadata: { userId: user._id.toString(), plan }
+    });
+
+    res.json({ success: true, sessionUrl: session.url, sessionId: session.id });
+  } catch (error) {
+    console.error('Checkout error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to create checkout session.' });
+  }
+});
+
+// POST /subscription/cancel
+router.post('/cancel', protect, async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!user.stripeSubscriptionId) {
+      return res.status(400).json({ success: false, message: 'No active subscription found.' });
+    }
+
+    const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
+      cancel_at_period_end: true
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription will be canceled at end of billing period.',
+      cancelAt: new Date(subscription.current_period_end * 1000)
+    });
+  } catch (error) {
+    console.error('Cancel error:', error);
+    res.status(500).json({ success: false, message: 'Failed to cancel subscription.' });
+  }
+});
+
+// GET /subscription/status
+router.get('/status', protect, async (req, res) => {
+  try {
+    const user = req.user;
+    res.json({
+      success: true,
+      plan: user.plan,
+      subscriptionStatus: user.subscriptionStatus,
+      subscriptionEndDate: user.subscriptionEndDate,
+      videosUsed: user.videosGeneratedThisMonth,
+      videoLimit: user.getVideoLimit(),
+      allowedVideoTypes: user.getAllowedVideoTypes(),
+      maxDuration: user.getMaxDuration()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch subscription status.' });
+  }
+});
+
+// POST /subscription/webhook (raw body needed)
+router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const userId = session.metadata.userId;
+        const plan = session.metadata.plan;
+        const subscriptionId = session.subscription;
+
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+        await User.findByIdAndUpdate(userId, {
+          plan,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: 'active',
+          subscriptionEndDate: new Date(subscription.current_period_end * 1000)
+        });
+        break;
+      }
+
+      case 'invoice.payment_succeeded': {
+        const invoice = event.data.object;
+        const subscriptionId = invoice.subscription;
+
+        if (subscriptionId) {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          const customerId = invoice.customer;
+          const user = await User.findOne({ stripeCustomerId: customerId });
+
+          if (user) {
+            user.subscriptionStatus = 'active';
+            user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+            await user.save({ validateBeforeSave: false });
+          }
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const user = await User.findOne({ stripeCustomerId: invoice.customer });
+        if (user) {
+          user.subscriptionStatus = 'past_due';
+          await user.save({ validateBeforeSave: false });
+        }
+        break;
+      }
+
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object;
+        const user = await User.findOne({ stripeSubscriptionId: subscription.id });
+        if (user) {
+          user.plan = 'free';
+          user.subscriptionStatus = 'canceled';
+          user.stripeSubscriptionId = null;
+          await user.save({ validateBeforeSave: false });
+        }
+        break;
+      }
+
+      case 'customer.subscription.updated': {
+        const subscription = event.data.object;
+        const user = await User.findOne({ stripeSubscriptionId: subscription.id });
+        if (user) {
+          user.subscriptionEndDate = new Date(subscription.current_period_end * 1000);
+          if (subscription.cancel_at_period_end) {
+            user.subscriptionStatus = 'canceled';
+          }
+          await user.save({ validateBeforeSave: false });
+        }
+        break;
+      }
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ error: 'Webhook handler failed.' });
+  }
+});
+
+module.exports = router;
+
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const Video = require('../models/Video');
+const User = require('../models/User');
+const { protect } = require('../middleware/auth');
+const router = express.Router();
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime'];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG, WebP, MP4, MOV allowed.'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 50 * 1024 * 1024, files: 5 }
+});
+
+const simulateVideoGeneration = async (videoId, isPriority) => {
+  const delay = isPriority ? 8000 : 20000;
+  setTimeout(async () => {
+    try {
+      const mockVideoUrls = {
+        product: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        anime: 'https://storage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4',
+        cinematic: 'https://storage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4'
+      };
+
+      const video = await Video.findById(videoId);
+      if (!video) return;
+
+      video.status = 'completed';
+      video.videoUrl = mockVideoUrls[video.videoType] || mockVideoUrls.product;
+      video.thumbnailUrl = 'https://picsum.photos/seed/' + videoId + '/640/360';
+      video.completedAt = new Date();
+      video.processingTime = delay / 1000;
+      await video.save();
+    } catch (err) {
+      console.error('Simulation error:', err);
+    }
+  }, delay);
+};
+
+// POST /generate-video
+router.post('/', protect, upload.array('files', 5), async (req, res) => {
+  try {
+    const { script, videoType, duration, title } = req.body;
+    const user = req.user;
+
+    if (!script || !videoType || !duration) {
+      return res.status(400).json({ success: false, message: 'Script, video type, and duration are required.' });
+    }
+
+    const allowedTypes = user.getAllowedVideoTypes();
+    if (!allowedTypes.includes(videoType)) {
+      return res.status(403).json({
+        success: false,
+        message: `Your ${user.plan} plan does not include ${videoType} video generation. Please upgrade.`,
+        upgradeRequired: true
+      });
+    }
+
+    const maxDuration = user.getMaxDuration();
+    if (parseInt(duration) > maxDuration) {
+      return res.status(403).json({
+        success: false,
+        message: `Your plan allows max ${maxDuration} seconds. Upgrade for longer videos.`,
+        upgradeRequired: true
+      });
+    }
+
+    const videoLimit = user.getVideoLimit();
+    if (user.plan !== 'premium' && user.videosGeneratedThisMonth >= videoLimit) {
+      return res.status(403).json({
+        success: false,
+        message: `Monthly limit of ${videoLimit} videos reached. Upgrade your plan for more.`,
+        upgradeRequired: true
+      });
+    }
+
+    const uploadedFiles = (req.files || []).map(f => ({
+      filename: f.filename,
+      originalName: f.originalname,
+      mimetype: f.mimetype,
+      size: f.size
+    }));
+
+    const video = await Video.create({
+      user: user._id,
+      title: title || `${videoType} Video - ${new Date().toLocaleDateString()}`,
+      script,
+      videoType,
+      duration: parseInt(duration),
+      status: 'processing',
+      hasWatermark: user.plan === 'basic',
+      isHD: user.plan === 'premium',
+      uploadedFiles,
+      planAtGeneration: user.plan
+    });
+
+    user.videosGeneratedThisMonth += 1;
+    await user.save({ validateBeforeSave: false });
+
+    const isPriority = user.plan === 'premium';
+    simulateVideoGeneration(video._id.toString(), isPriority);
+
+    res.status(201).json({
+      success: true,
+      message: 'Video generation started. Check back in a few moments.',
+      video: {
+        id: video._id,
+        title: video.title,
+        videoType: video.videoType,
+        duration: video.duration,
+        status: video.status,
+        createdAt: video.createdAt,
+        hasWatermark: video.hasWatermark,
+        isHD: video.isHD
+      }
+    });
+  } catch (error) {
+    console.error('Video generation error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Server error during video generation.' });
+  }
+});
+
+// GET /generate-video/history
+router.get('/history', protect, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const videos = await Video.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select('-uploadedFiles');
+
+    const total = await Video.countDocuments({ user: req.user._id });
+
+    res.json({
+      success: true,
+      videos,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch video history.' });
+  }
+});
+
+// GET /generate-video/:id
+router.get('/:id', protect, async (req, res) => {
+  try {
+    const video = await Video.findOne({ _id: req.params.id, user: req.user._id });
+    if (!video) {
+      return res.status(404).json({ success: false, message: 'Video not found.' });
+    }
+    res.json({ success: true, video });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch video.' });
+  }
+});
+
+module.exports = router;
+
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { protect } = require('../middleware/auth');
+const router = express.Router();
+
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+};
+
+const sendTokenResponse = (user, statusCode, res) => {
+  const token = generateToken(user._id);
+  res.status(statusCode).json({
+    success: true,
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      plan: user.plan,
+      subscriptionStatus: user.subscriptionStatus,
+      videosGeneratedThisMonth: user.videosGeneratedThisMonth,
+      videoLimit: user.getVideoLimit(),
+      allowedVideoTypes: user.getAllowedVideoTypes(),
+      maxDuration: user.getMaxDuration()
+    }
+  });
+};
+
+// POST /auth/signup
+router.post('/signup', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, message: 'Please provide name, email, and password.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters.' });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'Email already registered.' });
+    }
+
+    const user = await User.create({ name, email, password });
+    sendTokenResponse(user, 201, res);
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ success: false, message: 'Server error during signup.' });
+  }
+});
+
+// POST /auth/login
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Please provide email and password.' });
+    }
+
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    sendTokenResponse(user, 200, res);
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, message: 'Server error during login.' });
+  }
+});
+
+// GET /auth/me
+router.get('/me', protect, async (req, res) => {
+  try {
+    const user = req.user;
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        plan: user.plan,
+        subscriptionStatus: user.subscriptionStatus,
+        subscriptionEndDate: user.subscriptionEndDate,
+        videosGeneratedThisMonth: user.videosGeneratedThisMonth,
+        videoLimit: user.getVideoLimit(),
+        allowedVideoTypes: user.getAllowedVideoTypes(),
+        maxDuration: user.getMaxDuration(),
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error.' });
+  }
+});
+
+module.exports = router;
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+
+// Create uploads directory if not exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+// Stripe webhook needs raw body BEFORE express.json()
+const subscriptionRoutes = require('./routes/subscription');
+app.use('/subscription/webhook', subscriptionRoutes);
+
+// Middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Rate limiting
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { success: false, message: 'Too many requests. Please try again in 15 minutes.' }
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { success: false, message: 'Too many requests. Please slow down.' }
+});
+
+app.use('/auth', authLimiter);
+app.use('/generate-video', apiLimiter);
+
+// Routes
+app.use('/auth', require('./routes/auth'));
+app.use('/generate-video', require('./routes/video'));
+app.use('/subscription', subscriptionRoutes);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'Route not found.' });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error:', err);
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ success: false, message: 'File too large. Max 50MB allowed.' });
+  }
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal server error.'
+  });
+});
+
+// Database connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/aivideo')
+  .then(() => {
+    console.log('MongoDB connected successfully');
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('MongoDB connection failed:', err.message);
+    process.exit(1);
+  });
+
+module.exports = app;
+
+PORT=5000
+MONGODB_URI=mongodb+srv://your_user:your_password@cluster.mongodb.net/aivideo
+JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+FRONTEND_URL=http://localhost:3000
+
+# Stripe Price IDs (create these in Stripe Dashboard)
+STRIPE_BASIC_PRICE_ID=price_basic_monthly
+STRIPE_STANDARD_PRICE_ID=price_standard_monthly
+STRIPE_PREMIUM_PRICE_ID=price_premium_monthly
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="VidAI — AI-powered video generation platform. Create product ads, anime, and cinematic videos instantly." />
+    <title>VidAI — AI Video Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    @apply bg-slate-950 text-white font-sans antialiased;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-2.5 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95;
+  }
+  .btn-secondary {
+    @apply bg-slate-800 hover:bg-slate-700 text-white font-medium px-6 py-2.5 rounded-xl transition-all duration-200 border border-slate-700 hover:border-slate-600 active:scale-95;
+  }
+  .btn-outline {
+    @apply border border-blue-500 text-blue-400 hover:bg-blue-600 hover:text-white font-medium px-6 py-2.5 rounded-xl transition-all duration-200 active:scale-95;
+  }
+  .card {
+    @apply bg-slate-900 border border-slate-800 rounded-2xl p-6;
+  }
+  .input-field {
+    @apply w-full bg-slate-800 border border-slate-700 text-white placeholder-slate-500 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #1e3a8a 0%, #312e81 50%, #1e1b4b 100%);
+}
+
+.glass-card {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.shimmer {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.progress-bar {
+  @apply h-2 rounded-full bg-blue-600;
+  animation: progress 20s linear forwards;
+}
+
+@keyframes progress {
+  from { width: 0%; }
+  to { width: 90%; }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './App';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { authAPI } from '../utils/api';
+
+const AuthContext = createContext(null);
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadUser = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await authAPI.getMe();
+      setUser(res.data.user);
+    } catch (err) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUser();
+  }, [loadUser]);
+
+  const signup = async (name, email, password) => {
+    setError(null);
+    const res = await authAPI.signup({ name, email, password });
+    const { token, user: userData } = res.data;
+    localStorage.setItem('token', token);
+    setUser(userData);
+    return userData;
+  };
+
+  const login = async (email, password) => {
+    setError(null);
+    const res = await authAPI.login({ email, password });
+    const { token, user: userData } = res.data;
+    localStorage.setItem('token', token);
+    setUser(userData);
+    return userData;
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    setUser(null);
+    window.location.href = '/';
+  };
+
+  const refreshUser = async () => {
+    try {
+      const res = await authAPI.getMe();
+      setUser(res.data.user);
+    } catch (err) {
+      console.error('Failed to refresh user:', err);
+    }
+  };
+
+  const canGenerateVideo = (videoType) => {
+    if (!user) return false;
+    return user.allowedVideoTypes?.includes(videoType);
+  };
+
+  const hasReachedLimit = () => {
+    if (!user) return true;
+    if (user.plan === 'premium') return false;
+    return user.videosGeneratedThisMonth >= user.videoLimit;
+  };
+
+  const getPlanLabel = () => {
+    const labels = { free: 'Free', basic: 'Basic', standard: 'Standard', premium: 'Premium' };
+    return labels[user?.plan] || 'Free';
+  };
+
+  return (
+    <AuthContext.Provider value={{
+      user, loading, error,
+      signup, login, logout,
+      refreshUser, canGenerateVideo,
+      hasReachedLimit, getPlanLabel,
+      isAuthenticated: !!user,
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
+};
